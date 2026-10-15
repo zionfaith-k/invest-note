@@ -143,7 +143,10 @@ async function openPost(id){
   try{
     const [page, memo] = await Promise.all([ gh(p.path, {raw: true}), gh(`memos/${id}.md`, {raw: true}) ]);
     const fr = document.getElementById("fr");
-    fr.onload = () => { try{ fr.style.height = (fr.contentDocument.documentElement.scrollHeight + 8) + "px"; }catch(e){} };
+    fr.onload = () => { try{
+      const d = fr.contentDocument, w = d.documentElement.clientWidth, sw = d.documentElement.scrollWidth;
+      if (sw > w + 4 && !d.querySelector("[data-keep]")) d.body.style.zoom = (w / sw).toFixed(3);   // 옛 580px 고정 메일은 폭에 맞게 줄임
+      fr.style.height = (d.documentElement.scrollHeight + 8) + "px"; }catch(e){} };
     fr.srcdoc = `<base target="_blank"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:8px;overflow-wrap:anywhere}img,table{max-width:100%!important}</style>` + (page || "본문을 찾지 못했어요.");
     const ta = document.getElementById("memo"); ta.disabled = false; ta.placeholder = "여기에 적고 저장"; ta.value = memo || "";
   }catch(e){ document.getElementById("mm").textContent = "불러오기 실패: " + e.message; }
