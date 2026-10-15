@@ -46,6 +46,19 @@ textarea{width:100%;min-height:110px;resize:vertical}
 .hint{font-size:13px;color:var(--sub)}
 .msg{font-size:13px;margin-left:8px}
 .empty{color:var(--sub);text-align:center;padding:40px 0}
+.q{display:flex;align-items:center;gap:10px}
+.q .nm{flex:1;min-width:0}.q .nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q .px{text-align:right;font-variant-numeric:tabular-nums}.q .px b{display:block}
+.up{color:var(--up)}.dn{color:var(--down)}
+.seg{display:flex;background:var(--chip);border-radius:10px;padding:3px;gap:3px;margin:10px 0}
+.seg button{flex:1;border:0;background:none;border-radius:8px;padding:7px 0;font:inherit;font-size:13px;color:var(--sub)}
+.seg button.on{background:var(--card);color:var(--ink);font-weight:700}
+.chart{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 6px 4px;touch-action:pan-y}
+.chart svg{display:block;width:100%;height:auto}
+.tip{position:absolute;top:6px;left:10px;font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:13px;margin-top:10px}
+.stats div{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding:3px 0}
+.stats span{color:var(--sub)}
 ol{padding-left:20px} li{margin-bottom:4px}
 code{background:var(--chip);border-radius:4px;padding:0 4px}
 </style>
@@ -55,6 +68,7 @@ code{background:var(--chip);border-radius:4px;padding:0 4px}
   <h1>투자 노트</h1>
   <nav>
     <button data-tab="posts" class="on">받은 글</button>
+    <button data-tab="quotes">시세</button>
     <button data-tab="notes">내 노트</button>
     <button data-tab="set">설정</button>
   </nav>
@@ -72,7 +86,7 @@ const enc = p => p.split("/").map(encodeURIComponent).join("/");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 async function gh(path, opt = {}){
-  const r = await fetch(API + enc(path) + (opt.method ? "" : `?t=${Date.now()}`), {
+  const r = await fetch(API + enc(path) + (opt.method ? "" : `?t=${Date.now()}` + (opt.ref ? `&ref=${opt.ref}` : "")), {
     method: opt.method || "GET", cache: "no-store",
     headers: { Authorization: `Bearer ${token()}`, Accept: opt.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
                ...(opt.body ? {"Content-Type": "application/json"} : {}) },
@@ -162,6 +176,94 @@ async function saveMemo(id){
   sv.disabled = false;
 }
 
+/* ── 시세 ── */
+const CAT = { hold: "보유", "kr-stock": "국내 주식", "kr-etf": "국내 ETF", "us-stock": "미국 주식", "us-etf": "미국 ETF" };
+S.qcat = "전체"; S.range = "오늘";
+const fmt = (v, cur) => v == null ? "-" : cur === "KRW" ? Math.round(v).toLocaleString("ko-KR") : (+v).toLocaleString("en-US", {maximumFractionDigits: 2});
+const pct = v => v == null ? "-" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
+const cls = v => v > 0 ? "up" : v < 0 ? "dn" : "";
+async function loadQuotes(){
+  if (needToken()) return;
+  $app.innerHTML = `<div class="empty">불러오는 중…</div>`;
+  try{ S.prices = await getJSONref("prices.json", "live"); drawQuotes(); }catch(e){ fail(e); }
+}
+async function getJSONref(p, ref){ const t = await gh(p, {raw: true, ref}); return t ? JSON.parse(t) : null; }
+function catOf(it){ return it.type === "hold" ? "보유" : (CAT[it.cat] || "기타"); }
+function spark(it){
+  const today = it.intra && it.intra.c.length > 1 && it.intraDate;
+  const ys = today ? it.intra.c : it.daily.c.slice(-22);
+  const base = today ? it.prev : ys[0];
+  return line(ys, {w: 90, h: 34, base, color: ys[ys.length-1] >= base ? "var(--up)" : "var(--down)", pad: 2});
+}
+function line(ys, o){
+  const w = o.w, h = o.h, p = o.pad ?? 6, v = ys.filter(x => x != null);
+  let lo = Math.min(...v, o.base ?? Infinity), hi = Math.max(...v, o.base ?? -Infinity); if (hi === lo){ hi += 1; lo -= 1; }
+  const n = o.slots || ys.length, X = i => p + (w - 2*p) * (n > 1 ? i/(n-1) : .5), Y = y => p + (h - 2*p) * (1 - (y - lo)/(hi - lo));
+  const d = ys.map((y, i) => y == null ? "" : `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(y).toFixed(1)}`).join("");
+  const b = o.base != null ? `<line x1="${p}" x2="${w-p}" y1="${Y(o.base)}" y2="${Y(o.base)}" stroke="var(--sub)" stroke-dasharray="3 3" stroke-width="1" opacity=".6"/>` : "";
+  return `<svg viewBox="0 0 ${w} ${h}" ${o.big ? "" : `width="${w}" height="${h}"`}>${b}<path d="${d}" fill="none" stroke="${o.color}" stroke-width="${o.big ? 2 : 1.5}" stroke-linejoin="round"/>${o.extra || ""}</svg>`;
+}
+function drawQuotes(){
+  const P = S.prices; if (!P){ $app.innerHTML = `<div class="empty">시세 파일이 아직 없어요.</div>`; return; }
+  const cats = ["전체", ...["보유","국내 주식","국내 ETF","미국 주식","미국 ETF","기타"].filter(c => P.items.some(i => catOf(i) === c))];
+  const list = P.items.filter(i => S.qcat === "전체" || catOf(i) === S.qcat);
+  let html = `<div class="row"><span class="hint">기준 ${esc(P.generatedAt)}${P.fx ? ` · 환율 ${P.fx.price.toLocaleString()}원` : ""}</span><span style="flex:1"></span><button class="btn ghost" onclick="loadQuotes()">새로고침</button></div>
+    <div class="chips">${cats.map(c => `<button class="chip ${c===S.qcat?"on":""}" onclick="S.qcat='${c}';drawQuotes()">${c}</button>`).join("")}</div>`;
+  for (const it of list){
+    html += `<button class="item q" onclick="openQuote('${esc(it.ticker)}')"><div class="nm"><b>${esc(it.name)}</b><span class="hint">${esc(it.ticker)} · ${esc(catOf(it))}</span></div>
+      ${spark(it)}<div class="px"><b>${fmt(it.price, it.currency)}</b><span class="${cls(it.chg)}">${pct(it.chg)}</span></div></button>`;
+  }
+  if (P.errors && P.errors.length) html += `<p class="hint">못 받은 것: ${P.errors.map(esc).join(" · ")}</p>`;
+  html += `<p class="hint">실시간이 아니에요. 장중 20분마다 새로 받아요(국내 약 1분 지연 자료). 미국은 장중 1~2번.</p>`;
+  $app.innerHTML = html;
+}
+function openQuote(tk){
+  const it = S.prices.items.find(x => x.ticker === tk); if (!it) return;
+  location.hash = "q=" + tk; S.cur = it;
+  const hasToday = it.intra && it.intra.c.length > 1;
+  if (!hasToday && S.range === "오늘") S.range = "1개월";
+  $app.innerHTML = `<button class="back" onclick="history.back()">‹ 시세</button>
+    <div class="q"><div class="nm"><b style="font-size:18px">${esc(it.name)}</b><span class="hint">${esc(it.ticker)} · ${esc(it.asOf)}</span></div>
+    <div class="px"><b style="font-size:18px">${fmt(it.price, it.currency)}</b><span class="${cls(it.chg)}">${pct(it.chg)}</span></div></div>
+    <div class="seg">${["오늘","1개월","3개월","6개월"].map(r => `<button class="${r===S.range?"on":""}" ${r==="오늘"&&!hasToday?"disabled":""} onclick="S.range='${r}';openQuote('${esc(tk)}')">${r==="오늘"?(it.market==="US"?"최근 장(5분)":"오늘(5분)"):r}</button>`).join("")}</div>
+    <div class="chart" id="ch"></div><div class="stats" id="st"></div>
+    <p class="hint">${S.range==="오늘" ? "5분마다 마지막 체결가를 이은 선 · 점선 = 전날 종가" : "일봉 종가를 이은 선 · 점선 = 기간 첫날 종가"} · 차트를 누르거나 밀면 그 시점 값이 보여요.</p>`;
+  drawChart(it);
+}
+function drawChart(it){
+  const W = 360, H = 220, today = S.range === "오늘";
+  let xs, ys, base;
+  if (today){
+    xs = it.intra.t; ys = it.intra.c; base = it.prev;
+  } else {
+    const n = {"1개월": 22, "3개월": 66, "6개월": 130}[S.range];
+    xs = it.daily.d.slice(-n); ys = it.daily.c.slice(-n); base = ys[0];
+  }
+  let slots = ys.length;
+  if (today && it.market === "KR") slots = 78;        // 09:00~15:25 → 장 전체 폭에 맞춰 진행 정도가 보이게
+  const lo = Math.min(...ys, base), hi = Math.max(...ys, base);
+  const last = ys[ys.length-1], color = last >= base ? "var(--up)" : "var(--down)";
+  const ch = document.getElementById("ch");
+  const lab = `<text x="${W-4}" y="14" text-anchor="end" font-size="11" fill="var(--sub)">${fmt(hi, it.currency)}</text><text x="${W-4}" y="${H-6}" text-anchor="end" font-size="11" fill="var(--sub)">${fmt(lo, it.currency)}</text>
+    <text x="6" y="${H-6}" font-size="11" fill="var(--sub)">${esc(xs[0] || "")}</text>`;
+  ch.innerHTML = `<div class="tip" id="tp"></div>` + line(ys, {w: W, h: H, base, color, pad: 18, slots, big: true, extra: lab + `<circle id="cur" r="4" fill="${color}" cx="-10" cy="-10"/>`});
+  const p = 18, X = i => p + (W - 2*p) * (slots > 1 ? i/(slots-1) : .5), Y = y => p + (H - 2*p) * (1 - (y - lo)/((hi - lo) || 1));
+  const tp = document.getElementById("tp"), cur = document.getElementById("cur");
+  const show = i => { i = Math.max(0, Math.min(ys.length-1, i)); cur.setAttribute("cx", X(i)); cur.setAttribute("cy", Y(ys[i]));
+    const r = (ys[i]/base - 1) * 100; tp.innerHTML = `${esc(xs[i])} · <b style="color:var(--ink)">${fmt(ys[i], it.currency)}</b> <span class="${cls(r)}">${pct(r)}</span>`; };
+  const svg = ch.querySelector("svg");
+  const mv = e => { const b = svg.getBoundingClientRect(), x = (e.clientX - b.left) / b.width * W; show(Math.round((x - p) / (W - 2*p) * (slots - 1))); };
+  svg.addEventListener("pointerdown", mv); svg.addEventListener("pointermove", e => (e.buttons || e.pointerType === "touch") && mv(e));
+  show(ys.length - 1);
+  const D = it.daily, n = D.c.length, hi6 = Math.max(...D.h.filter(x => x != null)), lo6 = Math.min(...D.l.filter(x => x != null));
+  const todayBar = D.d[n-1].replace(/-/g, "") === (it.intraDate || "");
+  const st = [["전날 종가", fmt(it.prev, it.currency)], [todayBar ? "오늘 시가" : "마지막 날 시가", fmt(D.o[n-1], it.currency)],
+    [todayBar ? "오늘 고가" : "마지막 날 고가", fmt(D.h[n-1], it.currency)], [todayBar ? "오늘 저가" : "마지막 날 저가", fmt(D.l[n-1], it.currency)],
+    ["6개월 고점", fmt(hi6, it.currency)], ["고점 대비", `<b class="${cls(it.price/hi6-1)}">${pct((it.price/hi6-1)*100)}</b>`],
+    ["6개월 저점", fmt(lo6, it.currency)], ["저점 대비", `<b class="${cls(it.price/lo6-1)}">${pct((it.price/lo6-1)*100)}</b>`]];
+  document.getElementById("st").innerHTML = st.map(([a, b]) => `<div><span>${a}</span>${b}</div>`).join("");
+}
+
 /* ── 내 노트 ── */
 async function loadNotes(){
   if (needToken()) return;
@@ -227,10 +329,11 @@ async function saveToken(){
 function go(tab){
   S.tab = tab; history.replaceState(null, "", location.pathname);
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  ({ posts: loadPosts, notes: loadNotes, set: drawSet })[tab]();
+  ({ posts: loadPosts, quotes: loadQuotes, notes: loadNotes, set: drawSet })[tab]();
 }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.tab));
-window.addEventListener("popstate", () => { if (!location.hash) S.tab === "posts" && S.posts.length ? drawPosts() : go(S.tab); });
+window.addEventListener("popstate", () => { if (location.hash) return;
+  if (S.tab === "posts" && S.posts.length) drawPosts(); else if (S.tab === "quotes" && S.prices) drawQuotes(); else go(S.tab); });
 go("posts");
 </script>
 </body>
