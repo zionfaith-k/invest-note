@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#f7f6f3">
+<title>투자 노트</title>
+<style>
+:root{
+  --bg:#f7f6f3; --card:#fff; --line:#e7e4de; --ink:#22211f; --sub:#77736b; --accent:#2f5bd3;
+  --chip:#efece6; --up:#d23c3c; --down:#2f5bd3; --ok:#1f8a4c;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#161615; --card:#201f1d; --line:#34322e; --ink:#ecebe7; --sub:#a29e95; --accent:#7d9cf0; --chip:#2b2a27;
+  }
+}
+:root[data-theme="dark"]{--bg:#161615; --card:#201f1d; --line:#34322e; --ink:#ecebe7; --sub:#a29e95; --accent:#7d9cf0; --chip:#2b2a27;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",sans-serif;-webkit-text-size-adjust:100%}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 16px 0}
+h1{font-size:19px;margin:0 0 8px}
+nav{display:flex;gap:4px}
+nav button{flex:1;border:0;background:none;color:var(--sub);font:inherit;font-weight:600;padding:9px 0;border-bottom:2px solid transparent}
+nav button.on{color:var(--ink);border-color:var(--ink)}
+main{max-width:760px;margin:0 auto;padding:12px 16px 80px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:0;background:var(--chip);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px}
+.chip.on{background:var(--ink);color:var(--bg)}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+select,input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+textarea{width:100%;min-height:110px;resize:vertical}
+.day{font-size:13px;font-weight:700;color:var(--sub);margin:16px 2px 6px}
+.item{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px;margin-bottom:6px;color:inherit;font:inherit}
+.meta{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--sub)}
+.kind{background:var(--chip);border-radius:6px;padding:1px 6px;color:var(--ink)}
+.dot{color:var(--ok);font-weight:700}
+.title{margin-top:3px;font-weight:600;word-break:keep-all;overflow-wrap:anywhere}
+.btn{border:0;border-radius:10px;padding:9px 14px;font:inherit;font-weight:600;background:var(--ink);color:var(--bg)}
+.btn.ghost{background:var(--chip);color:var(--ink)}
+.back{border:0;background:none;color:var(--accent);font:inherit;padding:4px 0;margin-bottom:6px}
+.frame{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;min-height:300px;display:block}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.hint{font-size:13px;color:var(--sub)}
+.msg{font-size:13px;margin-left:8px}
+.empty{color:var(--sub);text-align:center;padding:40px 0}
+ol{padding-left:20px} li{margin-bottom:4px}
+code{background:var(--chip);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>투자 노트</h1>
+  <nav>
+    <button data-tab="posts" class="on">받은 글</button>
+    <button data-tab="notes">내 노트</button>
+    <button data-tab="set">설정</button>
+  </nav>
+</header>
+<main id="app"></main>
+
+<script>
+const OWNER = "zionfaith-k", REPO = "invest-note-data", API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/`;
+const $app = document.getElementById("app");
+const S = { tab: "posts", month: null, months: [], posts: [], kind: "전체", memos: new Set() };
+
+function token(){ try{ return localStorage.getItem("invest_note_token") || ""; }catch(e){ return ""; } }
+function setToken(v){ try{ v ? localStorage.setItem("invest_note_token", v) : localStorage.removeItem("invest_note_token"); }catch(e){} }
+const enc = p => p.split("/").map(encodeURIComponent).join("/");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function gh(path, opt = {}){
+  const r = await fetch(API + enc(path) + (opt.method ? "" : `?t=${Date.now()}`), {
+    method: opt.method || "GET", cache: "no-store",
+    headers: { Authorization: `Bearer ${token()}`, Accept: opt.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
+               ...(opt.body ? {"Content-Type": "application/json"} : {}) },
+    body: opt.body ? JSON.stringify(opt.body) : undefined });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${r.status} ${r.status === 401 ? "접근 키가 맞지 않아요" : r.statusText}`);
+  return opt.raw ? r.text() : r.json();
+}
+const getJSON = async p => { const t = await gh(p, {raw: true}); return t ? JSON.parse(t) : null; };
+const b64 = s => { const b = new TextEncoder().encode(s); let x = ""; b.forEach(c => x += String.fromCharCode(c)); return btoa(x); };
+async function putText(path, text, msg){
+  const cur = await gh(path);
+  return gh(path, { method: "PUT", body: { message: msg, content: b64(text), ...(cur ? {sha: cur.sha} : {}) } });
+}
+async function delFile(path, msg){
+  const cur = await gh(path); if (cur) await gh(path, { method: "DELETE", body: { message: msg, sha: cur.sha } });
+}
+
+function needToken(){
+  if (token()) return false;
+  $app.innerHTML = `<div class="empty">처음 한 번 접근 키를 넣어야 글이 보여요.<br><br><button class="btn" onclick="go('set')">설정으로</button></div>`;
+  return true;
+}
+function fail(e){ $app.innerHTML = `<div class="empty">불러오지 못했어요: ${esc(e.message)}<br><br><button class="btn ghost" onclick="go(S.tab)">다시 시도</button></div>`; }
+const WD = "일월화수목금토";
+function dayLabel(t){ const d = new Date(t.slice(0,10) + "T00:00"); return `${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`; }
+
+/* ── 받은 글 ── */
+async function loadPosts(){
+  if (needToken()) return;
+  $app.innerHTML = `<div class="empty">불러오는 중…</div>`;
+  try{
+    S.months = (await getJSON("index/months.json")) || [];
+    if (!S.month || !S.months.includes(S.month)) S.month = S.months[0];
+    const [posts, memos] = await Promise.all([ S.month ? getJSON(`index/${S.month}.json`) : [], gh("memos") ]);
+    S.posts = posts || [];
+    S.memos = new Set((memos || []).map(f => f.name.replace(/\.md$/, "")));
+    drawPosts();
+  }catch(e){ fail(e); }
+}
+function drawPosts(){
+  const kinds = ["전체", ...new Set(S.posts.map(p => p.kind))];
+  if (!kinds.includes(S.kind)) S.kind = "전체";
+  const list = S.posts.filter(p => S.kind === "전체" || p.kind === S.kind);
+  let html = `<div class="row"><select onchange="S.month=this.value;loadPosts()">${S.months.map(m => `<option ${m===S.month?"selected":""}>${m}</option>`).join("")}</select>
+    <span class="hint">${list.length}개</span><span style="flex:1"></span><button class="btn ghost" onclick="loadPosts()">새로고침</button></div>
+    <div class="chips">${kinds.map(k => `<button class="chip ${k===S.kind?"on":""}" onclick="S.kind='${esc(k)}';drawPosts()">${esc(k)}</button>`).join("")}</div>`;
+  if (!list.length) html += `<div class="empty">아직 글이 없어요.</div>`;
+  let day = "";
+  for (const p of list){
+    const d = p.t.slice(0,10);
+    if (d !== day){ day = d; html += `<div class="day">${dayLabel(p.t)}</div>`; }
+    html += `<button class="item" onclick="openPost('${p.id}')"><div class="meta"><span>${p.t.slice(11)}</span><span class="kind">${esc(p.kind)}</span>${S.memos.has(p.id) ? '<span class="dot">✎ 메모</span>' : ""}</div>
+      <div class="title">${esc(p.title.replace(/^\s*\[[^\]]+\]\s*/, ""))}</div></button>`;
+  }
+  $app.innerHTML = html;
+}
+async function openPost(id){
+  const p = S.posts.find(x => x.id === id); if (!p) return;
+  location.hash = "p=" + id;
+  $app.innerHTML = `<button class="back" onclick="history.back()">‹ 목록</button>
+    <div class="meta"><span>${dayLabel(p.t)} ${p.t.slice(11)}</span><span class="kind">${esc(p.kind)}</span></div>
+    <div class="title" style="font-size:17px;margin:4px 0 10px">${esc(p.title)}</div>
+    <iframe class="frame" id="fr" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+    <div class="box"><b>내 메모</b> <span class="hint">예상 vs 실제, 오늘 한 행동 등</span>
+      <textarea id="memo" placeholder="불러오는 중…" disabled></textarea>
+      <div class="row" style="margin:8px 0 0"><button class="btn" id="sv" onclick="saveMemo('${id}')">메모 저장</button><span class="msg" id="mm"></span></div></div>`;
+  try{
+    const [page, memo] = await Promise.all([ gh(p.path, {raw: true}), gh(`memos/${id}.md`, {raw: true}) ]);
+    const fr = document.getElementById("fr");
+    fr.onload = () => { try{ fr.style.height = (fr.contentDocument.documentElement.scrollHeight + 8) + "px"; }catch(e){} };
+    fr.srcdoc = `<base target="_blank"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:8px;overflow-wrap:anywhere}img,table{max-width:100%!important}</style>` + (page || "본문을 찾지 못했어요.");
+    const ta = document.getElementById("memo"); ta.disabled = false; ta.placeholder = "여기에 적고 저장"; ta.value = memo || "";
+  }catch(e){ document.getElementById("mm").textContent = "불러오기 실패: " + e.message; }
+}
+async function saveMemo(id){
+  const v = document.getElementById("memo").value, mm = document.getElementById("mm"), sv = document.getElementById("sv");
+  sv.disabled = true; mm.textContent = "저장 중…";
+  try{
+    if (v.trim()){ await putText(`memos/${id}.md`, v, `메모: ${id}`); S.memos.add(id); }
+    else { await delFile(`memos/${id}.md`, `메모 삭제: ${id}`); S.memos.delete(id); }
+    mm.textContent = "저장했어요 ✓";
+  }catch(e){ mm.textContent = "실패: " + e.message; }
+  sv.disabled = false;
+}
+
+/* ── 내 노트 ── */
+async function loadNotes(){
+  if (needToken()) return;
+  $app.innerHTML = `<div class="empty">불러오는 중…</div>`;
+  try{
+    const files = ((await gh("notes")) || []).filter(f => f.name.endsWith(".md")).sort((a,b) => b.name.localeCompare(a.name)).slice(0, 60);
+    const texts = await Promise.all(files.map(f => gh(f.path, {raw: true})));
+    S.notes = files.map((f, i) => ({ name: f.name, text: texts[i] || "" }));
+    let html = `<div class="row"><button class="btn" onclick="editNote()">＋ 새 노트</button><span style="flex:1"></span><button class="btn ghost" onclick="loadNotes()">새로고침</button></div>`;
+    if (!S.notes.length) html += `<div class="empty">아직 노트가 없어요. 복기·계획·궁금한 점을 적어 두세요.</div>`;
+    for (const n of S.notes){
+      const m = n.name.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
+      const lines = n.text.trim().split("\n");
+      html += `<button class="item" onclick="editNote('${n.name}')"><div class="meta"><span>${m ? `${+m[2]}/${+m[3]} ${m[4]}:${m[5]}` : esc(n.name)}</span></div>
+        <div class="title">${esc(lines[0] || "(빈 노트)")}</div>${lines.length > 1 ? `<div class="hint">${esc(lines.slice(1).join(" ").slice(0, 90))}</div>` : ""}</button>`;
+    }
+    $app.innerHTML = html;
+  }catch(e){ fail(e); }
+}
+function editNote(name){
+  const n = name ? S.notes.find(x => x.name === name) : null;
+  if (!name){ const d = new Date(), z = x => String(x).padStart(2, "0");
+    name = `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.md`; }
+  location.hash = "n=" + name;
+  $app.innerHTML = `<button class="back" onclick="history.back()">‹ 노트 목록</button>
+    <div class="hint">첫 줄이 제목이 돼요.</div>
+    <textarea id="nt" style="min-height:55vh">${esc(n ? n.text : "")}</textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" id="sv" onclick="saveNote('${name}')">저장</button>
+    ${n ? `<button class="btn ghost" onclick="removeNote('${name}')">삭제</button>` : ""}<span class="msg" id="mm"></span></div>`;
+}
+async function saveNote(name){
+  const mm = document.getElementById("mm"), sv = document.getElementById("sv"); sv.disabled = true; mm.textContent = "저장 중…";
+  try{ await putText(`notes/${name}`, document.getElementById("nt").value, `노트: ${name}`); mm.textContent = "저장했어요 ✓"; }
+  catch(e){ mm.textContent = "실패: " + e.message; }
+  sv.disabled = false;
+}
+async function removeNote(name){
+  if (!confirm("이 노트를 지울까요?")) return;
+  try{ await delFile(`notes/${name}`, `노트 삭제: ${name}`); history.back(); }catch(e){ alert("실패: " + e.message); }
+}
+
+/* ── 설정 ── */
+function drawSet(){
+  $app.innerHTML = `<div class="box"><b>접근 키</b>
+    <p class="hint">글은 비공개 저장소 <code>${REPO}</code>에 있어요. 이 화면은 코드만 있어서, 키가 없으면 아무것도 안 보여요. 키는 이 기기 브라우저에만 저장돼요.</p>
+    <input id="tk" type="password" style="width:100%" placeholder="github_pat_…" value="${esc(token())}">
+    <div class="row" style="margin-top:8px"><button class="btn" onclick="saveToken()">저장하고 확인</button><button class="btn ghost" onclick="setToken('');drawSet()">이 기기에서 지우기</button></div>
+    <div class="msg" id="mm" style="margin:4px 0 0"></div></div>
+    <div class="box"><b>키 만드는 법 (한 번만)</b><ol class="hint">
+      <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token</li>
+      <li>Repository access: <b>Only select repositories</b> → <code>${REPO}</code> 하나만</li>
+      <li>Permissions → Repository → <b>Contents: Read and write</b></li>
+      <li>만들어진 <code>github_pat_…</code> 를 위 칸에 붙여 넣기</li></ol></div>`;
+}
+async function saveToken(){
+  setToken(document.getElementById("tk").value.trim());
+  const mm = document.getElementById("mm"); mm.textContent = "확인 중…";
+  try{ const m = await getJSON("index/months.json"); mm.textContent = m ? `연결됐어요 ✓ (글 있는 달 ${m.length}개)` : "연결은 됐는데 글 목록이 없어요"; }
+  catch(e){ mm.textContent = "실패: " + e.message; }
+}
+
+/* ── 이동 ── */
+function go(tab){
+  S.tab = tab; history.replaceState(null, "", location.pathname);
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  ({ posts: loadPosts, notes: loadNotes, set: drawSet })[tab]();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.tab));
+window.addEventListener("popstate", () => { if (!location.hash) S.tab === "posts" && S.posts.length ? drawPosts() : go(S.tab); });
+go("posts");
+</script>
+</body>
+</html>
