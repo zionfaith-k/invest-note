@@ -120,14 +120,19 @@ function dayLabel(t){ const d = new Date(t.slice(0,10) + "T00:00"); return `${d.
 async function loadPosts(){
   if (needToken()) return;
   $app.innerHTML = `<div class="empty">불러오는 중…</div>`;
+  const my = S.req = (S.req || 0) + 1, tab = S.tab, idx = IDX();     // 늦게 온 응답이 다른 탭 화면을 덮지 않게
+  const stale = () => my !== S.req || tab !== S.tab;
   try{
-    S.months = (await getJSON(`${IDX()}/months.json`)) || [];
+    const months = (await getJSON(`${idx}/months.json`)) || [];
+    if (stale()) return;
+    S.months = months;
     if (!S.month || !S.months.includes(S.month)) S.month = S.months[0];
-    const [posts, memos] = await Promise.all([ S.month ? getJSON(`${IDX()}/${S.month}.json`) : [], gh("memos") ]);
+    const [posts, memos] = await Promise.all([ S.month ? getJSON(`${idx}/${S.month}.json`) : [], gh("memos") ]);
+    if (stale()) return;
     S.posts = posts || [];
     S.memos = new Set((memos || []).map(f => f.name.replace(/\.md$/, "")));
     drawPosts();
-  }catch(e){ fail(e); }
+  }catch(e){ if (!stale()) fail(e); }
 }
 function drawPosts(){
   const kinds = ["전체", ...new Set(S.posts.map(p => p.kind))];
@@ -331,7 +336,7 @@ async function saveToken(){
 function go(tab){
   const board = tab === "etf" ? "etf" : "";
   if ((tab === "posts" || tab === "etf") && board !== S.board){ S.board = board; S.month = null; S.posts = []; S.kind = "전체"; }
-  S.tab = tab; history.replaceState(null, "", location.pathname);
+  S.tab = tab; S.req = (S.req || 0) + 1; history.replaceState(null, "", location.pathname);
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   ({ posts: loadPosts, etf: loadPosts, quotes: loadQuotes, notes: loadNotes, set: drawSet })[tab]();
 }
