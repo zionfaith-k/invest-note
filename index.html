@@ -68,6 +68,7 @@ code{background:var(--chip);border-radius:4px;padding:0 4px}
   <h1>투자 노트</h1>
   <nav>
     <button data-tab="posts" class="on">받은 글</button>
+    <button data-tab="etf">ETF 구성</button>
     <button data-tab="quotes">시세</button>
     <button data-tab="notes">내 노트</button>
     <button data-tab="set">설정</button>
@@ -78,7 +79,8 @@ code{background:var(--chip);border-radius:4px;padding:0 4px}
 <script>
 const OWNER = "zionfaith-k", REPO = "invest-note-data", API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/`;
 const $app = document.getElementById("app");
-const S = { tab: "posts", month: null, months: [], posts: [], kind: "전체", memos: new Set() };
+const S = { tab: "posts", board: "", month: null, months: [], posts: [], kind: "전체", memos: new Set() };
+const IDX = () => S.board ? `index-${S.board}` : "index";   // 게시판마다 글 목록을 따로 둔다 (받은 글 = index/, ETF 구성 = index-etf/)
 
 function token(){ try{ return localStorage.getItem("invest_note_token") || ""; }catch(e){ return ""; } }
 function setToken(v){ try{ v ? localStorage.setItem("invest_note_token", v) : localStorage.removeItem("invest_note_token"); }catch(e){} }
@@ -119,9 +121,9 @@ async function loadPosts(){
   if (needToken()) return;
   $app.innerHTML = `<div class="empty">불러오는 중…</div>`;
   try{
-    S.months = (await getJSON("index/months.json")) || [];
+    S.months = (await getJSON(`${IDX()}/months.json`)) || [];
     if (!S.month || !S.months.includes(S.month)) S.month = S.months[0];
-    const [posts, memos] = await Promise.all([ S.month ? getJSON(`index/${S.month}.json`) : [], gh("memos") ]);
+    const [posts, memos] = await Promise.all([ S.month ? getJSON(`${IDX()}/${S.month}.json`) : [], gh("memos") ]);
     S.posts = posts || [];
     S.memos = new Set((memos || []).map(f => f.name.replace(/\.md$/, "")));
     drawPosts();
@@ -327,13 +329,15 @@ async function saveToken(){
 
 /* ── 이동 ── */
 function go(tab){
+  const board = tab === "etf" ? "etf" : "";
+  if ((tab === "posts" || tab === "etf") && board !== S.board){ S.board = board; S.month = null; S.posts = []; S.kind = "전체"; }
   S.tab = tab; history.replaceState(null, "", location.pathname);
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  ({ posts: loadPosts, quotes: loadQuotes, notes: loadNotes, set: drawSet })[tab]();
+  ({ posts: loadPosts, etf: loadPosts, quotes: loadQuotes, notes: loadNotes, set: drawSet })[tab]();
 }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.tab));
 window.addEventListener("popstate", () => { if (location.hash) return;
-  if (S.tab === "posts" && S.posts.length) drawPosts(); else if (S.tab === "quotes" && S.prices) drawQuotes(); else go(S.tab); });
+  if ((S.tab === "posts" || S.tab === "etf") && S.posts.length) drawPosts(); else if (S.tab === "quotes" && S.prices) drawQuotes(); else go(S.tab); });
 go("posts");
 </script>
 </body>
